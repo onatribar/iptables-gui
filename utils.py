@@ -15,16 +15,12 @@ class RuleValidator:
 class IptablesInterface:
     @staticmethod
     def add_rule(proto, src_ip, dst_ip, dst_port, action, flags=None):
-        cmd = [
-            "pkexec", "iptables", "-I", "INPUT", "1",
-            "-p", proto,
-            "-s", src_ip
-        ]
+        cmd = ["pkexec", "iptables", "-I", "INPUT", "1", "-p", proto]
 
-        if dst_ip.strip():
-            cmd += ["-d", dst_ip]
-        if dst_port.strip():
-            cmd += ["--dport", dst_port]
+        if src_ip.strip(): cmd += ["-s", src_ip]
+        if dst_ip.strip(): cmd += ["-d", dst_ip]
+        if dst_port.strip(): cmd += ["--dport", dst_port]
+
         if proto == "tcp" and flags:
             all_flags = "SYN,ACK,FIN,RST,PSH,URG"
             selected = ",".join(flags)
@@ -34,6 +30,7 @@ class IptablesInterface:
 
         print("DEBUG Running:", " ".join(cmd))
         subprocess.run(cmd, check=True)
+
 
     @staticmethod
     def list_rules():
