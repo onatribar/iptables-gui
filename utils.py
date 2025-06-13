@@ -136,32 +136,39 @@ class IptablesInterface:
     @staticmethod
     def list_rules_detailed() -> List[Dict[str, Any]]:
         L, S = IptablesInterface._rules_L(), IptablesInterface._rules_S()
-        out: List[Dict[str, Any]] = []
+        merged: List[Dict[str, Any]] = []
+
         for l, s in zip(L, S):
             cols = l.split()
-            if len(cols) < 9:
+            if len(cols) < 10:
                 continue
-            line, pkts, proto, src, dst = cols[0], cols[1], cols[4], cols[8], cols[9]
+
+            line, pkts, proto = cols[0], cols[1], cols[4]
+            src,  dst  = cols[8], cols[9]          # corrected indices
             dpt = re.search(r"dpt:(\d+)", l)
             spt = re.search(r"spt:(\d+)", l)
             ports = dpt.group(1) if dpt else (spt.group(1) if spt else "-")
-            fm = re.search(r"--tcp-flags\s+\S+\s+([A-Z,]+)", s)
+
+            fm = re.search(r"--tcp-flags\\s+\\S+\\s+([A-Z,]+)", s)
             flags = fm.group(1) if fm else "-"
-            disabled = "RETURN" in s and "DISABLED" in s
-            out.append(
-                dict(
-                    line=line,
-                    pkts=pkts,
-                    proto=proto,
-                    src=src,
-                    dst=dst,
-                    ports=ports,
-                    flags=flags,
-                    disabled=disabled,
-                    spec=s,
-                )
-            )
-        return out
+
+            m_jump  = re.search(r"-j\\s+(\\w+)", s)
+            action  = m_jump.group(1) if m_jump else "?"
+            disabled = action == "RETURN" and "DISABLED" in s
+
+            merged.append({
+                "line":  line,
+                "pkts":  pkts,
+                "proto": proto,
+                "src":   src,
+                "dst":   dst,
+                "ports": ports,
+                "flags": flags,
+                "action": action,    # ← new key
+                "disabled": disabled,
+                "spec": s,
+            })
+        return merged
 
     @staticmethod
     def reorder_by_packets() -> None:

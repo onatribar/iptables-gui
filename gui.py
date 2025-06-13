@@ -102,12 +102,14 @@ class IptablesGUI(QMainWindow):
 
     def _build_table(self) -> None:
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(8)   # was 7
         self.table.setHorizontalHeaderLabels(
-            ["Line", "Proto", "Source", "Destination", "Ports", "Flags", "Packets"]
+            ["Line", "Proto", "Source", "Destination",
+             "Ports", "Flags", "Action", "Packets"]  # added “Action”
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.table)
+
 
     def _build_buttons(self) -> None:
         row = QHBoxLayout()
@@ -148,7 +150,8 @@ class IptablesGUI(QMainWindow):
         flags = [cb.text() for cb in self.flag_boxes if cb.isChecked()] if proto == "tcp" else None
 
         # Bulk mode
-        wlist, blist = self._parse_bulk(self.whitelist_box.toPlainText()), self._parse_bulk(self.blacklist_box.toPlainText())
+        wlist = self._parse_bulk(self.whitelist_box.toPlainText())
+        blist = self._parse_bulk(self.blacklist_box.toPlainText())
         if wlist or blist:
             try:
                 for ip in wlist:
@@ -159,18 +162,22 @@ class IptablesGUI(QMainWindow):
                     if not RuleValidator.validate_ip(ip):
                         raise ValueError(f"Invalid IP in blacklist: {ip}")
                     IptablesInterface.add_rule(proto, ip, "", "", "", "DROP", flags)
-                self.whitelist_box.clear()
-                self.blacklist_box.clear()
+                self.whitelist_box.clear(); self.blacklist_box.clear()
             except Exception as err:
                 QMessageBox.critical(self, "Bulk add failed", str(err))
             finally:
                 self.refresh_table()
             return
 
-        # Single rule
+        # Single rule mode
         src_ip, dst_ip = self.src_ip.text().strip(), self.dst_ip.text().strip()
         src_port, dst_port = self.src_port.text().strip(), self.dst_port.text().strip()
         action = self.action_box.currentText()
+
+        if src_ip in blist:
+            action = "DROP"
+        elif src_ip in wlist:
+            action = "ACCEPT"
 
         # Validation
         if not RuleValidator.validate_ip(src_ip):
@@ -197,14 +204,18 @@ class IptablesGUI(QMainWindow):
             for r in rules:
                 row = self.table.rowCount()
                 self.table.insertRow(row)
+
                 self.table.setItem(row, 0, QTableWidgetItem(r["line"]))
                 self.table.setItem(row, 1, QTableWidgetItem(r["proto"]))
                 self.table.setItem(row, 2, QTableWidgetItem(r["src"]))
                 self.table.setItem(row, 3, QTableWidgetItem(r["dst"]))
                 self.table.setItem(row, 4, QTableWidgetItem(r["ports"]))
-                flag_txt = r["flags"] + (" (DISABLED)" if r["disabled"] else "")
+
+                flag_txt = r["flags"] + (" (DIS)" if r["disabled"] else "")
                 self.table.setItem(row, 5, QTableWidgetItem(flag_txt))
-                self.table.setItem(row, 6, QTableWidgetItem(r["pkts"]))
+
+                self.table.setItem(row, 6, QTableWidgetItem(r["action"]))  # new column
+                self.table.setItem(row, 7, QTableWidgetItem(r["pkts"]))    # shifted
         except Exception as err:
             QMessageBox.critical(self, "Refresh failed", str(err))
 
