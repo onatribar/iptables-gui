@@ -82,6 +82,13 @@ class IptablesInterface:
 
     @staticmethod
     def toggle_rule_state(line_number: str) -> None:
+        """
+        Flip between:
+
+            ... -j ACCEPT/DROP
+        and:
+            ... -j RETURN  -m comment --comment "DISABLED:ACCEPT/DROP"
+        """
         if not line_number.isdigit():
             raise ValueError("Line number must be numeric")
 
@@ -90,68 +97,69 @@ class IptablesInterface:
         if idx >= len(specs):
             raise IndexError("Line number out of range")
 
-        tokens = specs[idx].split()[2:]  # drop "-A INPUT"
+        tokens = specs[idx].split()[2:]          # drop “-A INPUT”
         try:
             j_idx = tokens.index("-j")
         except ValueError:
-            raise RuntimeError("Malformed rule (missing -j)")
+            raise RuntimeError("Malformed rule (no -j)")
 
-        target = tokens[j_idx + 1]
-        if target == "RETURN":
-            c_idx = tokens.index("--comment") if "--comment" in tokens else None
-            orig = (
-                re.search(r"DISABLED:([A-Z]+)", tokens[c_idx + 1]).group(1)
-                if c_idx
-                else "DROP"
-            )
+        jump = tokens[j_idx + 1]
+
+        # Re-enable
+        if jump == "RETURN":
+            # locate the "--comment DISABLED:XYZ" block
+            if "--comment" in tokens:
+                c_idx = tokens.index("--comment")
+                text = tokens[c_idx + 1].strip('"')
+                m = re.match(r"DISABLED:([A-Z]+)", text)
+                orig = m.group(1) if m else "DROP"
+                del tokens[c_idx - 2 : c_idx + 2]
+            else:
+                orig = "DROP"
+
+            j_idx = tokens.index("-j")
             tokens[j_idx + 1] = orig
-            if c_idx:
-                del tokens[c_idx : c_idx + 2]
+
+        # Disable
         else:
+            orig = jump
             tokens[j_idx + 1] = "RETURN"
-            tokens += ["-m", "comment", "--comment", f"DISABLED:{target}"]
+            tokens += [
+                "-m", "comment", "--comment", f'DISABLED:{orig}'
+            ]
 
         IptablesInterface._run(
             ["pkexec", "iptables", "-R", "INPUT", line_number, *tokens]
         )
 
-    # Listing and reordering
+
     @staticmethod
     def list_rules_detailed() -> List[Dict[str, Any]]:
         L, S = IptablesInterface._rules_L(), IptablesInterface._rules_S()
         out: List[Dict[str, Any]] = []
-
         for l, s in zip(L, S):
             cols = l.split()
             if len(cols) < 9:
                 continue
-
-            line_no, pkts, proto, src, dst = (
-                cols[0],
-                cols[1],
-                cols[4],
-                cols[7],
-                cols[8],
-            )
+            line, pkts, proto, src, dst = cols[0], cols[1], cols[4], cols[8], cols[9]
             dpt = re.search(r"dpt:(\d+)", l)
             spt = re.search(r"spt:(\d+)", l)
             ports = dpt.group(1) if dpt else (spt.group(1) if spt else "-")
             fm = re.search(r"--tcp-flags\s+\S+\s+([A-Z,]+)", s)
             flags = fm.group(1) if fm else "-"
             disabled = "RETURN" in s and "DISABLED" in s
-
             out.append(
-                {
-                    "line": line_no,
-                    "pkts": pkts,
-                    "proto": proto,
-                    "src": src,
-                    "dst": dst,
-                    "ports": ports,
-                    "flags": flags,
-                    "disabled": disabled,
-                    "spec": s,
-                }
+                dict(
+                    line=line,
+                    pkts=pkts,
+                    proto=proto,
+                    src=src,
+                    dst=dst,
+                    ports=ports,
+                    flags=flags,
+                    disabled=disabled,
+                    spec=s,
+                )
             )
         return out
 
@@ -159,7 +167,6 @@ class IptablesInterface:
     def reorder_by_packets() -> None:
         rules = IptablesInterface.list_rules_detailed()
         rules.sort(key=lambda r: int(r["pkts"]), reverse=True)
-
         IptablesInterface._run(["pkexec", "iptables", "-F", "INPUT"])
         for r in rules:
             IptablesInterface._run(

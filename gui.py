@@ -202,7 +202,7 @@ class IptablesGUI(QMainWindow):
                 self.table.setItem(row, 2, QTableWidgetItem(r["src"]))
                 self.table.setItem(row, 3, QTableWidgetItem(r["dst"]))
                 self.table.setItem(row, 4, QTableWidgetItem(r["ports"]))
-                flag_txt = r["flags"] + (" (DIS)" if r["disabled"] else "")
+                flag_txt = r["flags"] + (" (DISABLED)" if r["disabled"] else "")
                 self.table.setItem(row, 5, QTableWidgetItem(flag_txt))
                 self.table.setItem(row, 6, QTableWidgetItem(r["pkts"]))
         except Exception as err:
