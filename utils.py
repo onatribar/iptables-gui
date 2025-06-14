@@ -143,32 +143,43 @@ class IptablesInterface:
             if len(cols) < 10:
                 continue
 
-            line, pkts, proto = cols[0], cols[1], cols[4]
-            src,  dst  = cols[8], cols[9]          # corrected indices
-            dpt = re.search(r"dpt:(\d+)", l)
-            spt = re.search(r"spt:(\d+)", l)
+            line = cols[0]
+            pkts = cols[1]
+            proto = cols[4]
+            src = cols[8]
+            dst = cols[9]
+
+            # extract --dport or --sport
+            dpt = re.search(r'dpt:(\d+)', l)
+            spt = re.search(r'spt:(\d+)', l)
             ports = dpt.group(1) if dpt else (spt.group(1) if spt else "-")
 
-            fm = re.search(r"--tcp-flags\\s+\\S+\\s+([A-Z,]+)", s)
+            # extract TCP flags
+            fm = re.search(r'--tcp-flags\s+\S+\s+([A-Z,]+)', s)
             flags = fm.group(1) if fm else "-"
 
-            m_jump  = re.search(r"-j\\s+(\\w+)", s)
-            action  = m_jump.group(1) if m_jump else "?"
+            # extract action (ACCEPT, DROP, RETURN, etc.)
+            m_jump = re.search(r'-j\s+(\w+)', s)
+            action = m_jump.group(1) if m_jump else "?"
+
+            # detect disabled rules
             disabled = action == "RETURN" and "DISABLED" in s
 
             merged.append({
-                "line":  line,
-                "pkts":  pkts,
+                "line": line,
+                "pkts": pkts,
                 "proto": proto,
-                "src":   src,
-                "dst":   dst,
+                "src": src,
+                "dst": dst,
                 "ports": ports,
                 "flags": flags,
-                "action": action,    # ← new key
+                "action": action,
                 "disabled": disabled,
                 "spec": s,
             })
+
         return merged
+
 
     @staticmethod
     def reorder_by_packets() -> None:
