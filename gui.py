@@ -149,6 +149,12 @@ class IptablesGUI(QMainWindow):
         proto = self.proto_box.currentText()
         flags = [cb.text() for cb in self.flag_boxes if cb.isChecked()] if proto == "tcp" else None
 
+        # Grab destination port (used in bulk rules too)
+        dst_port = self.dst_port.text().strip()
+        if not RuleValidator.validate_port(dst_port):
+            QMessageBox.warning(self, "Invalid Port", "Destination port must be 1-65535.")
+            return
+
         # Bulk mode
         wlist = self._parse_bulk(self.whitelist_box.toPlainText())
         blist = self._parse_bulk(self.blacklist_box.toPlainText())
@@ -157,11 +163,11 @@ class IptablesGUI(QMainWindow):
                 for ip in wlist:
                     if not RuleValidator.validate_ip(ip):
                         raise ValueError(f"Invalid IP in whitelist: {ip}")
-                    IptablesInterface.add_rule(proto, ip, "", "", "", "ACCEPT", flags)
+                    IptablesInterface.add_rule(proto, ip, "", "", dst_port, "ACCEPT", None)
                 for ip in blist:
                     if not RuleValidator.validate_ip(ip):
                         raise ValueError(f"Invalid IP in blacklist: {ip}")
-                    IptablesInterface.add_rule(proto, ip, "", "", "", "DROP", flags)
+                    IptablesInterface.add_rule(proto, ip, "", "", dst_port, "DROP", None)
                 self.whitelist_box.clear(); self.blacklist_box.clear()
             except Exception as err:
                 QMessageBox.critical(self, "Bulk add failed", str(err))
@@ -171,13 +177,8 @@ class IptablesGUI(QMainWindow):
 
         # Single rule mode
         src_ip, dst_ip = self.src_ip.text().strip(), self.dst_ip.text().strip()
-        src_port, dst_port = self.src_port.text().strip(), self.dst_port.text().strip()
+        src_port = self.src_port.text().strip()
         action = self.action_box.currentText()
-
-        if src_ip in blist:
-            action = "DROP"
-        elif src_ip in wlist:
-            action = "ACCEPT"
 
         # Validation
         if not RuleValidator.validate_ip(src_ip):
@@ -186,8 +187,6 @@ class IptablesGUI(QMainWindow):
             QMessageBox.warning(self, "Invalid IP", "Invalid destination IPv4/CIDR."); return
         if not RuleValidator.validate_port(src_port):
             QMessageBox.warning(self, "Invalid Port", "Source port must be 1-65535."); return
-        if not RuleValidator.validate_port(dst_port):
-            QMessageBox.warning(self, "Invalid Port", "Destination port must be 1-65535."); return
         if not RuleValidator.validate_flags(proto, flags):
             QMessageBox.warning(self, "Invalid Flags", "TCP flags only valid for protocol TCP."); return
 
@@ -196,6 +195,7 @@ class IptablesGUI(QMainWindow):
             self.refresh_table()
         except Exception as err:
             QMessageBox.critical(self, "Add failed", str(err))
+
 
     def refresh_table(self) -> None:
         try:
