@@ -53,16 +53,20 @@ class IptablesInterface:
         comment: str | None = None,
     ) -> None:
         cmd: List[str] = ["pkexec", "iptables", "-I", "INPUT", "1", "-p", proto]
+
         if src_ip:
             cmd += ["-s", src_ip]
         if dst_ip:
             cmd += ["-d", dst_ip]
-        if src_port:
+
+        if src_port and src_port != dst_port:
             cmd += ["--sport", src_port]
         if dst_port:
             cmd += ["--dport", dst_port]
+
         if proto == "tcp" and flags:
             cmd += ["--tcp-flags", "SYN,ACK,FIN,RST,PSH,URG", ",".join(flags)]
+
         cmd += ["-j", action]
 
         parts = ["gui"]
@@ -70,9 +74,11 @@ class IptablesInterface:
             parts.append(f"flags={','.join(flags)}")
         if comment:
             parts.append(comment)
+
         cmd += ["-m", "comment", "--comment", ";".join(parts)]
 
         IptablesInterface._run(cmd)
+
 
     @staticmethod
     def delete_rule(line_number: str) -> None:
@@ -83,11 +89,9 @@ class IptablesInterface:
     @staticmethod
     def toggle_rule_state(line_number: str) -> None:
         """
-        Flip between:
-
-            ... -j ACCEPT/DROP
-        and:
-            ... -j RETURN  -m comment --comment "DISABLED:ACCEPT/DROP"
+        Toggles a rule at the given line number:
+        - If it's active (e.g., -j ACCEPT), changes it to RETURN with a comment.
+        - If it's disabled (RETURN + DISABLED:...), restores original jump.
         """
         if not line_number.isdigit():
             raise ValueError("Line number must be numeric")
@@ -97,40 +101,49 @@ class IptablesInterface:
         if idx >= len(specs):
             raise IndexError("Line number out of range")
 
-        tokens = specs[idx].split()[2:]          # drop “-A INPUT”
+        tokens = specs[idx].split()
+
+        if len(tokens) < 4 or tokens[0] != "-A" or tokens[1] != "INPUT":
+            raise RuntimeError("Malformed rule structure")
+
+        rule_tokens = tokens[2:]  # drop -A INPUT
+        if not rule_tokens or "-j" not in rule_tokens:
+            raise RuntimeError("Cannot safely process malformed rule")
+
         try:
-            j_idx = tokens.index("-j")
-        except ValueError:
-            raise RuntimeError("Malformed rule (no -j)")
+            j_idx = rule_tokens.index("-j")
+            jump = rule_tokens[j_idx + 1]
+        except (ValueError, IndexError):
+            raise RuntimeError("Rule does not contain valid -j <TARGET>")
 
-        jump = tokens[j_idx + 1]
+        # === DISABLING ===
+        if jump != "RETURN":
+            original_action = jump
+            # Insert comment to preserve original
+            rule_tokens[j_idx + 1] = "RETURN"
+            rule_tokens += ["-m", "comment", "--comment", f"DISABLED:{original_action}"]
 
-        # Re-enable
-        if jump == "RETURN":
-            # locate the "--comment DISABLED:XYZ" block
-            if "--comment" in tokens:
-                c_idx = tokens.index("--comment")
-                text = tokens[c_idx + 1].strip('"')
-                m = re.match(r"DISABLED:([A-Z]+)", text)
-                orig = m.group(1) if m else "DROP"
-                del tokens[c_idx - 2 : c_idx + 2]
-            else:
-                orig = "DROP"
-
-            j_idx = tokens.index("-j")
-            tokens[j_idx + 1] = orig
-
-        # Disable
+        # === RE-ENABLING ===
         else:
-            orig = jump
-            tokens[j_idx + 1] = "RETURN"
-            tokens += [
-                "-m", "comment", "--comment", f'DISABLED:{orig}'
-            ]
+            # Find and extract original action from comment
+            try:
+                c_idx = rule_tokens.index("--comment")
+                comment_value = rule_tokens[c_idx + 1].strip('"')
+                if comment_value.startswith("DISABLED:"):
+                    restored_action = comment_value.split("DISABLED:")[1]
+                else:
+                    restored_action = "DROP"
+                # remove -m comment --comment <value>
+                del rule_tokens[c_idx - 1 : c_idx + 2]
+            except Exception:
+                restored_action = "DROP"
 
-        IptablesInterface._run(
-            ["pkexec", "iptables", "-R", "INPUT", line_number, *tokens]
-        )
+            rule_tokens[j_idx + 1] = restored_action
+
+        # Replace rule at INPUT line
+        if not rule_tokens or "-j" not in rule_tokens:
+            raise RuntimeError("Cannot safely replace rule: malformed token set")
+        IptablesInterface._run(["pkexec", "iptables", "-R", "INPUT", line_number, *rule_tokens])
 
 
     @staticmethod

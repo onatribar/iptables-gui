@@ -163,12 +163,13 @@ class IptablesGUI(QMainWindow):
                 for ip in wlist:
                     if not RuleValidator.validate_ip(ip):
                         raise ValueError(f"Invalid IP in whitelist: {ip}")
-                    IptablesInterface.add_rule(proto, ip, "", "", dst_port, "ACCEPT", None)
+                    IptablesInterface.add_rule(proto, ip, "127.0.0.1", "", dst_port, "ACCEPT", None)
                 for ip in blist:
                     if not RuleValidator.validate_ip(ip):
                         raise ValueError(f"Invalid IP in blacklist: {ip}")
-                    IptablesInterface.add_rule(proto, ip, "", "", dst_port, "DROP", None)
-                self.whitelist_box.clear(); self.blacklist_box.clear()
+                    IptablesInterface.add_rule(proto, ip, "127.0.0.1", "", dst_port, "DROP", None)
+                self.whitelist_box.clear()
+                self.blacklist_box.clear()
             except Exception as err:
                 QMessageBox.critical(self, "Bulk add failed", str(err))
             finally:
@@ -180,15 +181,22 @@ class IptablesGUI(QMainWindow):
         src_port = self.src_port.text().strip()
         action = self.action_box.currentText()
 
+        if not dst_ip:
+            dst_ip = "127.0.0.1"
+
         # Validation
         if not RuleValidator.validate_ip(src_ip):
-            QMessageBox.warning(self, "Invalid IP", "Invalid source IPv4/CIDR."); return
+            QMessageBox.warning(self, "Invalid IP", "Invalid source IPv4/CIDR.")
+            return
         if not RuleValidator.validate_ip(dst_ip):
-            QMessageBox.warning(self, "Invalid IP", "Invalid destination IPv4/CIDR."); return
+            QMessageBox.warning(self, "Invalid IP", "Invalid destination IPv4/CIDR.")
+            return
         if not RuleValidator.validate_port(src_port):
-            QMessageBox.warning(self, "Invalid Port", "Source port must be 1-65535."); return
+            QMessageBox.warning(self, "Invalid Port", "Source port must be 1-65535.")
+            return
         if not RuleValidator.validate_flags(proto, flags):
-            QMessageBox.warning(self, "Invalid Flags", "TCP flags only valid for protocol TCP."); return
+            QMessageBox.warning(self, "Invalid Flags", "TCP flags only valid for protocol TCP.")
+            return
 
         try:
             IptablesInterface.add_rule(proto, src_ip, dst_ip, src_port, dst_port, action, flags)
@@ -197,10 +205,20 @@ class IptablesGUI(QMainWindow):
             QMessageBox.critical(self, "Add failed", str(err))
 
 
+
     def refresh_table(self) -> None:
         try:
             rules = IptablesInterface.list_rules_detailed()
             self.table.setRowCount(0)
+
+            self.table.setColumnCount(8)
+            self.table.setHorizontalHeaderLabels([
+                "Line", "Proto", "Source", "Destination",
+                "Ports", "Flags", "Action", "Packets"
+            ])
+
+            self.last_pkts = {}  # << move here
+
             for r in rules:
                 row = self.table.rowCount()
                 self.table.insertRow(row)
@@ -214,10 +232,15 @@ class IptablesGUI(QMainWindow):
                 flag_txt = r["flags"] + (" (DIS)" if r["disabled"] else "")
                 self.table.setItem(row, 5, QTableWidgetItem(flag_txt))
 
-                self.table.setItem(row, 6, QTableWidgetItem(r["action"]))  # new column
-                self.table.setItem(row, 7, QTableWidgetItem(r["pkts"]))    # shifted
+                self.table.setItem(row, 6, QTableWidgetItem(r["action"]))
+                self.table.setItem(row, 7, QTableWidgetItem(r["pkts"]))
+
+                # snapshot for reorder
+                self.last_pkts[r["line"]] = int(r["pkts"])
+
         except Exception as err:
             QMessageBox.critical(self, "Refresh failed", str(err))
+
 
     def disable_rule(self) -> None:
         idx = self.table.currentRow()
@@ -243,7 +266,21 @@ class IptablesGUI(QMainWindow):
 
     def reorder_rules(self) -> None:
         try:
-            IptablesInterface.reorder_by_packets()
+            rules = IptablesInterface.list_rules_detailed()
+
+            # compute delta pkts since last refresh
+            deltas = [
+                (r, int(r["pkts"]) - self.last_pkts.get(r["line"], 0))
+                for r in rules if not r["disabled"]
+            ]
+            deltas.sort(key=lambda pair: pair[1], reverse=True)
+
+            IptablesInterface._run(["pkexec", "iptables", "-F", "INPUT"])
+            for r, _ in deltas:
+                IptablesInterface._run(
+                    ["pkexec", "iptables", "-A", "INPUT", *r["spec"].split()[2:]]
+                )
             self.refresh_table()
         except Exception as err:
             QMessageBox.critical(self, "Reorder failed", str(err))
+
